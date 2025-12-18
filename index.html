@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bear Classifier</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f5f7fa; padding: 40px; }
+    .container { max-width: 560px; margin: auto; background: white; padding: 25px; border-radius: 8px;
+                 box-shadow: 0 2px 12px rgba(0,0,0,0.1); }
+    label { display:block; margin-top: 12px; font-weight: 600; }
+    input[type=text] { width: 100%; padding: 10px; font-size: 14px; box-sizing: border-box; }
+    input[type=file] { margin-top: 10px; }
+    button { margin-top: 15px; padding: 10px 20px; font-size: 16px; cursor: pointer; }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .row button { margin-top: 0; }
+    pre { background: #eee; padding: 12px; margin-top: 15px; white-space: pre-wrap; }
+    img { max-width: 100%; margin-top: 10px; display: none; border-radius: 6px; }
+    .hint { color:#555; font-size: 13px; margin-top: 6px; line-height: 1.35; }
+    .small { font-size: 12px; color:#666; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>🐻 Bear Classification</h2>
+    <p class="hint">
+      Upload an image and click <b>Predict</b>. This calls your FastAPI endpoint <code>/predict</code> on a Hugging Face Space.
+    </p>
+
+    <label for="baseUrl">Hugging Face Space base URL</label>
+    <input id="baseUrl" type="text" value="https://tsiskaridze-bears.hf.space" />
+    <div class="hint small">
+      Format: <code>https://&lt;username&gt;-&lt;space-name&gt;.hf.space</code><br/>
+      Example endpoints: <code>/health</code>, <code>/docs</code>, <code>/predict</code>
+    </div>
+
+    <label for="imageInput">Image file</label>
+    <input type="file" id="imageInput" accept="image/*" />
+
+    <div class="row" style="margin-top:12px;">
+      <button onclick="predict()">Predict</button>
+      <button onclick="checkHealth()" type="button">Health</button>
+    </div>
+
+    <img id="preview" alt="preview" />
+
+    <h3 style="margin-top:18px;">Result</h3>
+    <pre id="output">No prediction yet.</pre>
+  </div>
+
+  <script>
+    function normalizeBaseUrl(url) {
+      url = (url || "").trim();
+      if (!url) return "";
+      // Remove trailing slash
+      if (url.endsWith("/")) url = url.slice(0, -1);
+      return url;
+    }
+
+    async function safeJson(response) {
+      // Hugging Face sometimes returns HTML (cold start/build/error page).
+      // Read as text first, then try JSON.parse.
+      const text = await response.text();
+      try {
+        return { ok: true, data: JSON.parse(text), raw: text };
+      } catch (e) {
+        return { ok: false, data: null, raw: text };
+      }
+    }
+
+    async function checkHealth() {
+      const output = document.getElementById("output");
+      const base = normalizeBaseUrl(document.getElementById("baseUrl").value);
+      if (!base) { alert("Please enter your Space base URL."); return; }
+
+      output.textContent = "Checking /health ...";
+
+      try {
+        const resp = await fetch(base + "/health", { method: "GET" });
+        const parsed = await safeJson(resp);
+
+        if (!resp.ok) {
+          output.textContent = "Health check failed (HTTP " + resp.status + ").\n\n" + (parsed.raw || "");
+          return;
+        }
+
+        if (!parsed.ok) {
+          output.textContent = "Server did not return JSON for /health.\n\nRaw response:\n" + (parsed.raw || "");
+          return;
+        }
+
+        output.textContent = "OK: " + JSON.stringify(parsed.data, null, 2);
+      } catch (err) {
+        output.textContent = "Error: " + err;
+      }
+    }
+
+    async function predict() {
+      const fileInput = document.getElementById("imageInput");
+      const output = document.getElementById("output");
+      const preview = document.getElementById("preview");
+      const base = normalizeBaseUrl(document.getElementById("baseUrl").value);
+
+      if (!base) { alert("Please enter your Space base URL."); return; }
+      if (fileInput.files.length === 0) { alert("Please select an image."); return; }
+
+      const file = fileInput.files[0];
+      preview.src = URL.createObjectURL(file);
+      preview.style.display = "block";
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      output.textContent = "Predicting...";
+
+      try {
+        const resp = await fetch(base + "/predict", { method: "POST", body: formData });
+        const parsed = await safeJson(resp);
+
+        if (!resp.ok) {
+          output.textContent = "Predict failed (HTTP " + resp.status + ").\n\n" + (parsed.raw || "");
+          return;
+        }
+
+        if (!parsed.ok) {
+          output.textContent =
+            "Server did not return JSON. (Often HF cold-start/build page)\n\nRaw response:\n" +
+            (parsed.raw || "");
+          return;
+        }
+
+        const data = parsed.data;
+
+        // Display only what corresponds to: pred_class, pred_idx, probs = learn.predict(img)
+        // pred_class -> data.label
+        // pred_idx   -> data.pred_idx (if you add it in API), else "N/A"
+        // probs      -> data.probs
+        const pred_idx = (data.pred_idx !== undefined) ? data.pred_idx : "N/A";
+
+        output.textContent =
+          "pred_class: " + data.label + "\n" +
+          "pred_idx: " + pred_idx + "\n" +
+          "probs:\n" + JSON.stringify(data.probs, null, 2);
+
+      } catch (err) {
+        output.textContent = "Error: " + err;
+      }
+    }
+  </script>
+</body>
+</html>
